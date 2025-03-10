@@ -1,0 +1,5 @@
+google-generativeai
+firecrawl
+selenium
+requests
+webdriver-manager 
