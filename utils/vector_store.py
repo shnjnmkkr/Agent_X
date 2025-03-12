@@ -5,6 +5,7 @@ import pickle
 import os
 import logging
 from sentence_transformers import SentenceTransformer
+from config import VECTOR_DIMENSION, SIMILARITY_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class VectorStore:
         self.model = SentenceTransformer(model_name)
         self.index = None
         self.stored_data: List[Dict] = []
-        self.dimension = 384  # Default for MiniLM
+        self.dimension = VECTOR_DIMENSION
 
     def create_index(self, texts: List[str], metadata: List[Dict] = None):
         """Create FAISS index from texts"""
@@ -47,13 +48,39 @@ class VectorStore:
                 if idx < len(self.stored_data):
                     result = self.stored_data[idx].copy()
                     result['distance'] = float(distances[0][i])
-                    results.append(result)
+                    if result['distance'] <= SIMILARITY_THRESHOLD:
+                        results.append(result)
                     
             return results
             
         except Exception as e:
             logger.error(f"Error during search: {e}")
             return []
+
+    def batch_search(self, queries: List[str], k: int = 5) -> List[List[Dict]]:
+        """Perform batch similarity search"""
+        try:
+            query_vectors = self.model.encode(queries)
+            distances, indices = self.index.search(
+                np.array(query_vectors).astype('float32'), k
+            )
+            
+            results = []
+            for i, query_indices in enumerate(indices):
+                query_results = []
+                for j, idx in enumerate(query_indices):
+                    if idx < len(self.stored_data):
+                        result = self.stored_data[idx].copy()
+                        result['distance'] = float(distances[i][j])
+                        if result['distance'] <= SIMILARITY_THRESHOLD:
+                            query_results.append(result)
+                results.append(query_results)
+                
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error during batch search: {e}")
+            return [[] for _ in queries]
 
     def save(self, path: str):
         """Save index and data to disk"""
@@ -76,4 +103,21 @@ class VectorStore:
             logger.info(f"Loaded index from {path}")
         except Exception as e:
             logger.error(f"Error loading index: {e}")
+            raise
+
+    def add_texts(self, texts: List[str], metadata: List[Dict] = None):
+        """Add new texts to existing index"""
+        try:
+            embeddings = self.model.encode(texts)
+            if self.index is None:
+                self.create_index(texts, metadata)
+            else:
+                self.index.add(np.array(embeddings).astype('float32'))
+                if metadata:
+                    self.stored_data.extend(metadata)
+                else:
+                    self.stored_data.extend([{"text": text} for text in texts])
+            logger.info(f"Added {len(texts)} new vectors to index")
+        except Exception as e:
+            logger.error(f"Error adding texts to index: {e}")
             raise 
